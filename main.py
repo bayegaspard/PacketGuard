@@ -4,15 +4,15 @@
 import torch
 import torch.optim as optim
 import pandas as pd
-from data_loader import load_and_preprocess_data
-from defense import ttpa_improved
-from evaluation import evaluate_metrics
-from utils import append_metrics
-from models import Net
-from train import *
-from config import *
-from models import *
-from sensitivity_analysis import *
+from src.data_loader import load_and_preprocess_data
+from src.defense import ttpa_improved
+from src.evaluation import evaluate_metrics
+from src.utils import append_metrics
+from src.models import Net
+from src.train import *
+from src.config import *
+from src.models import *
+from src.sensitivity_analysis import *
 def main():
     print("Starting PacketGuard Workflow...")
     
