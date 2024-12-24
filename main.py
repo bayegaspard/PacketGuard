@@ -1,6 +1,5 @@
-# main.py
-
-# ... [Other imports and code above]
+import sys
+sys.path.append('src') 
 import torch
 import torch.optim as optim
 import pandas as pd
