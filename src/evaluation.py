@@ -3,6 +3,7 @@
 import torch
 import numpy as np
 import pandas as pd
+import os
 from sklearn.metrics import (
     classification_report,
     confusion_matrix,
@@ -16,7 +17,7 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 from config import RESULTS_DIR, DEVICE
-from utils import save_confusion_matrix_plot, save_roc_curve_plot
+from utils import save_confusion_matrix_plot ,append_metrics
 
 def evaluate_metrics(y_true, y_pred):
     """
@@ -70,20 +71,28 @@ def classify_with_unknown(model, x, top_two_threshold=0.5, varmax_threshold=0.1)
                 predictions.append(top_indices[i,0].item())
     return predictions
 
-# evaluation.py
-
-from sklearn.metrics import classification_report, f1_score, accuracy_score, roc_auc_score
-
-# evaluation.py
-
-from sklearn.metrics import classification_report, f1_score, accuracy_score, roc_auc_score
 
 def evaluate_classifier(model, test_loader, label_encoder, description, features, master_df):
+    """
+    Evaluates the model and returns performance metrics.
+    
+    Parameters:
+        model (torch.nn.Module): Trained model.
+        test_loader (torch.utils.data.DataLoader): DataLoader for test data.
+        label_encoder (LabelEncoder): Encoder for class labels.
+        description (str): Description for the model or configuration.
+        features (pd.DataFrame): DataFrame of feature names.
+        master_df (pd.DataFrame): Master DataFrame to collect metrics.
+    
+    Returns:
+        float, float, float: F1 score, accuracy, and ROC AUC.
+    """
     model.eval()
     y_true = []
     y_pred = []
-    y_proba = []  # To store probabilities for ROC AUC
+    y_proba = []  # To store probabilities for ROC AUC calculation
 
+    # Iterate over test data
     for data, labels in test_loader:
         data, labels = data.to(DEVICE), labels.to(DEVICE)
         with torch.no_grad():
@@ -96,42 +105,39 @@ def evaluate_classifier(model, test_loader, label_encoder, description, features
     
     # Ensure label_encoder is provided
     if label_encoder is not None:
-        target_names = label_encoder.classes_
-        labels_indices = list(range(len(target_names)))  # Assuming classes are labeled from 0 to 8
+        target_names = label_encoder.classes_.tolist()
     else:
-        # Fallback: infer from y_true
-        target_names = sorted(list(set(y_true)))
-        labels_indices = sorted(list(set(y_true)))
-    
-    # Check for mismatch and adjust
-    unique_preds = set(y_pred)
-    unique_trues = set(y_true)
-    total_unique = unique_preds.union(unique_trues)
-    
-    if len(target_names) != len(total_unique):
-        print(f"Warning: Number of classes ({len(total_unique)}) does not match size of target_names ({len(target_names)}). Adjusting target_names.")
-        target_names = [f"Class {i}" for i in sorted(total_unique)]
-    
-    report = classification_report(
-        y_true, y_pred, target_names=target_names, labels=labels_indices, zero_division=0
-    )
-    print(f"Classification Report ({description}):\n{report}")
+        # Fallback: infer class names from unique labels
+        target_names = list(sorted(set(y_true)))
+
+    # Validate that target_names is a list of strings
+    target_names = [str(cn) for cn in target_names]
+
+    # Compute classification report
+    try:
+        report = classification_report(
+            y_true, y_pred, target_names=target_names, zero_division=0
+        )
+        print(f"Classification Report ({description}):\n{report}")
+    except Exception as e:
+        print(f"Error generating classification report: {e}")
+        report = None
     
     # Calculate metrics
-    f1 = f1_score(y_true, y_pred, average='weighted', zero_division=0)
+    f1 = f1_score(y_true, y_pred, average="weighted", zero_division=0)
     accuracy = accuracy_score(y_true, y_pred)
-    
+
     # Calculate ROC AUC
     try:
-        if len(labels_indices) == 2:
-            roc_auc = roc_auc_score(y_true, y_proba, average='weighted')
+        if len(set(y_true)) == 2:
+            roc_auc = roc_auc_score(y_true, [p[1] for p in y_proba])
         else:
-            roc_auc = roc_auc_score(y_true, y_proba, multi_class='ovo', average='weighted')
+            roc_auc = roc_auc_score(y_true, y_proba, multi_class="ovr", average="weighted")
     except Exception as e:
-        print(f"ROC AUC Score calculation failed: {e}")
+        print(f"Error calculating ROC AUC: {e}")
         roc_auc = None
-    
-    # Append to master_df if provided
+
+    # Append to master_df
     if master_df is not None:
         new_metrics = [
             {
@@ -159,9 +165,42 @@ def evaluate_classifier(model, test_loader, label_encoder, description, features
                 'Metric_Value': roc_auc
             }
         ]
-        new_metrics_df = pd.DataFrame(new_metrics)
-        master_df = pd.concat([master_df, new_metrics_df], ignore_index=True)
-    
+        master_df = append_metrics(master_df, new_metrics)
+
     return f1, accuracy, roc_auc
 
 
+
+
+def save_confusion_matrix(y_true, y_pred, labels, output_path, title="Confusion Matrix"):
+    """
+    Saves a confusion matrix as a heatmap.
+
+    Parameters:
+        y_true (array-like): True labels.
+        y_pred (array-like): Predicted labels.
+        labels (list): List of label names.
+        output_path (str): Path to save the confusion matrix plot.
+        title (str): Title for the confusion matrix plot.
+    """
+    cm = confusion_matrix(y_true, y_pred, labels=range(len(labels)))
+    cm_df = pd.DataFrame(cm, index=labels, columns=labels)
+
+    # Save confusion matrix as a CSV file
+    csv_path = os.path.splitext(output_path)[0] + ".csv"
+    cm_df.to_csv(csv_path, index=True)
+    print(f"Confusion matrix saved as CSV: {csv_path}")
+
+    # Plot the confusion matrix
+    plt.figure(figsize=(10, 8))
+    sns.heatmap(cm, annot=True, fmt="d", cmap="Blues", xticklabels=labels, yticklabels=labels)
+    plt.title(title, fontsize=16)
+    plt.xlabel("Predicted Label", fontsize=14)
+    plt.ylabel("True Label", fontsize=14)
+    plt.xticks(rotation=45)
+    plt.tight_layout()
+
+    # Save the plot
+    plt.savefig(output_path, dpi=300)
+    plt.close()
+    print(f"Confusion matrix plot saved: {output_path}")

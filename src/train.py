@@ -117,7 +117,7 @@ def train_classifier(model, train_loader, criterion, optimizer, num_epochs, vali
     
     return train_losses, val_f1_scores, val_accuracy_scores, val_roc_auc_scores, master_df
 
-def train_diffusion_model(diffusion_model, train_loader, criterion, optimizer, num_epochs=20, device=DEVICE):
+def train_diffusion_model(diffusion_model, train_loader, criterion, optimizer, num_epochs=5, device=DEVICE):
     """
     Trains the diffusion model for adversarial example generation.
     

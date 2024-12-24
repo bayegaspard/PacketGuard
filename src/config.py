@@ -22,11 +22,11 @@ BATCH_SIZE = 256
 
 # Define hyperparameter ranges for TTOPA
 HYPERPARAMETERS = {
-    "Learning Rate": [0.0001, 0.001, 0.005, 0.006, 0.007, 0.008, 0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.09, 0.1],
+    "Learning Rate": [0.0001],# 0.001, 0.005, 0.006, 0.007, 0.008, 0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.09, 0.1],
     "Number of Steps": [100, 200, 400, 800],
-    "Alpha": [0.0001, 0.001, 0.005, 0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.09, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0],
-    "Confidence Threshold": [0.0001, 0.001, 0.005, 0.01, 0.02, 0.03, 0.04, 0.05, 0.06,
-                             0.07, 0.08, 0.09, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.99]
+    "Alpha": [0.0001], #0.001, 0.005, 0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.09, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0],
+    "Confidence Threshold": [0.0001],# 0.001, 0.005, 0.01, 0.02, 0.03, 0.04, 0.05, 0.06,
+                             #0.07, 0.08, 0.09, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.99]
 }
 
 # Define diffusion model parameters
@@ -38,9 +38,9 @@ DIFFUSION_PARAMS = {
 
 # Define training parameters
 TRAINING_PARAMS = {
-    "num_epochs_classifier": 20,  # Number of epochs for classifier
+    "num_epochs_classifier": 5,  # Number of epochs for classifier
     "learning_rate_classifier": 0.0005,  # Learning rate for classifier
-    "num_epochs_diffusion": 20,  # Number of epochs for diffusion model
+    "num_epochs_diffusion": 5,  # Number of epochs for diffusion model
     "learning_rate_diffusion": 1e-3  # Learning rate for diffusion model
 }
 

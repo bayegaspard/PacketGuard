@@ -60,7 +60,7 @@
 #         loss = torch.nn.CrossEntropyLoss()(outputs, labels_valid)
 #         model.zero_grad()
 #         loss.backward()
-#         gradients = inputs_valid.grad.data.cpu().numpy()
+#         gradients = inputs_valid.retain_grad().data.cpu().numpy()
 #         sensitivity_per_feature += np.mean(np.abs(gradients), axis=0)  # Average over batch
 #         sample_count += 1
 #         skipped_samples += skipped_count
@@ -99,7 +99,7 @@
 #     print(f"Skipped {skipped_samples} samples due to 'Unknown' labels during sensitivity analysis.")
     
 #     return sensitivity_per_feature
-# sensitivity_analysis.py
+# # sensitivity_analysis.py
 
 import torch
 import pandas as pd
