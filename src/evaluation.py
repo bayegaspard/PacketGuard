@@ -8,42 +8,51 @@ from config import DEVICE
 import pandas as pd
 from sklearn.metrics import classification_report, f1_score
 
-def evaluate_classifier(model, data_loader, label_encoder, model_name, features, master_df, step=None, attack=None):
-    y_true, y_pred = [], []
+from sklearn.metrics import classification_report, f1_score, confusion_matrix
 
-    # Evaluate the model on the dataset
-    for data, labels in data_loader:
-        data, labels = data.to(model.device), labels.to(model.device)
-        outputs = model(data)
-        _, predicted = torch.max(outputs, 1)
+def evaluate_classifier(model, dataloader, label_encoder, model_name, features, master_df, step="", attack=""):
+    y_true = []
+    y_pred = []
+    model.eval()
+    
+    for data, labels in dataloader:
+        data, labels = data.to(DEVICE), labels.to(DEVICE)
+        with torch.no_grad():
+            outputs = model(data)
+        _, predictions = torch.max(outputs, dim=1)
         y_true.extend(labels.cpu().numpy())
-        y_pred.extend(predicted.cpu().numpy())
-
-    # Compute F1-score
-    f1 = f1_score(y_true, y_pred, average="weighted")
+        y_pred.extend(predictions.cpu().numpy())
+    
+    y_true_decoded = label_encoder.inverse_transform(y_true)
+    y_pred_decoded = label_encoder.inverse_transform(y_pred)
+    
+    f1 = f1_score(y_true, y_pred, average="macro")
     print(f"F1-Score ({model_name}): {f1:.4f}")
-
-    # Save classification report
-    report = classification_report(y_true, y_pred, target_names=label_encoder.classes_)
-    print(f"\nClassification Report ({model_name}):\n{report}")
-
-    # Add results to the master DataFrame
-    new_entry = pd.DataFrame([{
+    print(f"\nClassification Report ({model_name}):\n{classification_report(y_true_decoded, y_pred_decoded)}")
+    
+    new_entry = {
         "Attack": attack,
         "Model": model_name,
         "Step": step,
         "F1_Score": f1
-    }])
-    master_df = pd.concat([master_df, new_entry], ignore_index=True)
+    }
+    master_df = pd.concat([master_df, pd.DataFrame([new_entry])], ignore_index=True)
+    
+    return master_df, y_true, y_pred
 
-    return master_df
 
 
 
-def save_confusion_matrix(y_true, y_pred, labels, output_path):
+
+
+def save_confusion_matrix(y_true, y_pred, class_names, file_path):
+    from sklearn.metrics import confusion_matrix
     cm = confusion_matrix(y_true, y_pred)
-    cm_df = pd.DataFrame(cm, index=labels, columns=labels)
     plt.figure(figsize=(10, 8))
-    sns.heatmap(cm_df, annot=True, cmap="Blues", fmt="d")
-    plt.savefig(output_path)
-    plt.close()
+    sns.heatmap(cm, annot=True, fmt="d", cmap="Blues", xticklabels=class_names, yticklabels=class_names)
+    plt.xlabel("Predicted")
+    plt.ylabel("Actual")
+    plt.title("Confusion Matrix")
+    plt.savefig(file_path)  # Save the plot instead of displaying it
+    plt.close()  # Close the plot to free up resources
+

@@ -9,11 +9,60 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from sklearn.metrics import ConfusionMatrixDisplay
 
-def save_confusion_matrix_plot(y_true, y_pred, labels, filename):
-    disp = ConfusionMatrixDisplay.from_predictions(y_true, y_pred, display_labels=labels, cmap='viridis')
-    disp.figure_.savefig(filename)
-    print(f"Confusion matrix saved to {filename}")
-    plt.close(disp.figure_)  # Close the figure to free memory
+from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
+import matplotlib.pyplot as plt
+
+
+def save_confusion_matrix_and_data(y_true, y_pred, classes, save_path, csv_path):
+    """
+    Save the confusion matrix plot and its data to a CSV file.
+    """
+    if len(y_true) == 0 or len(y_pred) == 0:
+        print(f"Error: Empty predictions or labels. y_true: {len(y_true)}, y_pred: {len(y_pred)}")
+        return None
+
+    if len(y_true) != len(y_pred):
+        print(f"Error: Length mismatch. y_true: {len(y_true)}, y_pred: {len(y_pred)}")
+        return None
+
+    cm = confusion_matrix(y_true, y_pred, labels=range(len(classes)))
+    disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=classes)
+    
+    # Save plot
+    disp.plot(cmap=plt.cm.Blues, xticks_rotation='vertical')
+    plt.savefig(save_path)
+    plt.close()
+    
+    print(f"Confusion matrix plot saved to {save_path}")
+
+    # Save data to CSV
+    cm_df = pd.DataFrame(cm, index=classes, columns=classes)
+    cm_df.to_csv(csv_path)
+    print(f"Confusion matrix data saved to {csv_path}")
+    return cm
+
+
+# import numpy as np  # Add this import
+
+# def save_confusion_matrix_to_csv(y_true, y_pred, class_labels, attack_type, step, csv_file):
+#     """
+#     Save confusion matrix data to a CSV file.
+#     """
+#     from sklearn.metrics import confusion_matrix
+#     cm = confusion_matrix(y_true, y_pred, labels=range(len(class_labels)))
+#     flattened_cm = cm.flatten()
+#     header = ["Attack", "Step"] + [f"{row_label}_to_{col_label}" for row_label in class_labels for col_label in class_labels]
+
+#     # If the CSV file doesn't exist, create it and write the header
+#     if not os.path.exists(csv_file):
+#         with open(csv_file, "w") as f:
+#             f.write(",".join(header) + "\n")
+
+#     # Append the confusion matrix data
+#     with open(csv_file, "a") as f:
+#         row = [attack_type, step] + flattened_cm.tolist()
+#         f.write(",".join(map(str, row)) + "\n")
+
 
 
 def save_roc_curve_plot(fpr, tpr, roc_auc, optimal_threshold, description=''):

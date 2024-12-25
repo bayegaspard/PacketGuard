@@ -2,15 +2,15 @@ import sys
 import os
 sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
 import torch
+import pandas as pd
 import matplotlib
 matplotlib.use('Agg')
 
-import pandas as pd
 from torch.utils.data import DataLoader, TensorDataset
 from src.data_loader import load_and_preprocess_data
 from src.models import Net, FGSM, GeneticAlgorithmAttack, DiffusionModel
 from src.sensitivity_analysis import sensitivity_analysis_classifier, shap_analysis
-from src.utils import save_confusion_matrix_plot
+from src.utils import save_confusion_matrix_and_data
 from src.evaluation import evaluate_classifier
 from src.defense import ttpa_improved
 from src.train import train_classifier
@@ -44,7 +44,9 @@ def main():
     # Evaluate the classifier on clean data
     print("\nEvaluating the classifier on clean data...")
     master_df = pd.DataFrame(columns=["Attack", "Model", "Step", "F1_Score"])
-    master_df = evaluate_classifier(dnn_model, test_loader, label_encoder, "Default_Model", features, master_df)
+    confusion_data = []
+    master_df, y_true, y_pred = evaluate_classifier(dnn_model, test_loader, label_encoder, "Default_Model", features, master_df)
+    save_confusion_matrix_and_data(y_true, y_pred, label_encoder.classes_, "results/confusion_matrix_Default_Model.png", "results/confusion_matrix_Default_Model.csv")
 
     # FGSM Attack
     print("\nRunning FGSM Attack...")
@@ -52,7 +54,7 @@ def main():
     for step in [10, 100, 500, 1000]:
         print(f"\nFGSM Attack Step: {step} (steps ignored for FGSM, using default epsilon)")
         x_adv = fgsm.generate(data_dict["X_test"], data_dict["y_test"])
-        master_df = evaluate_classifier(
+        master_df, y_true, y_pred = evaluate_classifier(
             dnn_model,
             DataLoader(TensorDataset(x_adv, torch.tensor(data_dict["y_test"])), batch_size=256),
             label_encoder,
@@ -62,14 +64,14 @@ def main():
             step=f"FGSM_Step_{step}",
             attack="FGSM"
         )
-        save_confusion_matrix_plot(data_dict["y_test"], torch.argmax(dnn_model(x_adv), dim=1).cpu().numpy(), label_encoder.classes_, f"{RESULTS_DIR}/confusion_matrix_FGSM_Step_{step}.png")
+        save_confusion_matrix_and_data(y_true, y_pred, label_encoder.classes_, f"results/confusion_matrix_FGSM_Step_{step}.png", f"results/confusion_matrix_FGSM_Step_{step}.csv")
 
     # TTOPA Recovery for FGSM
     print("\nRunning TTOPA for FGSM...")
     for step in [10, 100, 300, 400]:
         print(f"\nTTOPA Recovery Step: {step}")
         x_recovered_fgsm = ttpa_improved(dnn_model, x_adv)
-        master_df = evaluate_classifier(
+        master_df, y_true, y_pred = evaluate_classifier(
             dnn_model,
             DataLoader(TensorDataset(x_recovered_fgsm, torch.tensor(data_dict["y_test"])), batch_size=256),
             label_encoder,
@@ -79,34 +81,32 @@ def main():
             step=f"TTOPA_Step_{step}",
             attack="FGSM"
         )
-        save_confusion_matrix_plot(data_dict["y_test"], torch.argmax(dnn_model(x_recovered_fgsm), dim=1).cpu().numpy(), label_encoder.classes_, f"{RESULTS_DIR}/confusion_matrix_FGSM_TTOPA_Step_{step}.png")
+        save_confusion_matrix_and_data(y_true, y_pred, label_encoder.classes_, f"results/confusion_matrix_FGSM_TTOPA_Step_{step}.png", f"results/confusion_matrix_FGSM_TTOPA_Step_{step}.csv")
 
     # Diffusion Attack
     print("\nRunning Diffusion Attack...")
     diffusion_attack = DiffusionModel(input_dim=len(features)).to(DEVICE)
     for step in [10, 100, 500, 1000]:
-        # Cap the step value at 999
-        capped_step = min(step, 999)
-        print(f"\nDiffusion Attack Step: {capped_step}")
-        x_adv_diffusion = diffusion_attack.generate(data_dict["X_test"], t=capped_step)
-        master_df = evaluate_classifier(
+        print(f"\nDiffusion Attack Step: {step}")
+        x_adv_diffusion = diffusion_attack.generate(data_dict["X_test"], t=step)
+        master_df, y_true, y_pred = evaluate_classifier(
             dnn_model,
             DataLoader(TensorDataset(x_adv_diffusion, torch.tensor(data_dict["y_test"])), batch_size=256),
             label_encoder,
             "Default_Model_Diffusion_adv",
             features,
             master_df,
-            step=f"Diffusion_Step_{capped_step}",
+            step=f"Diffusion_Step_{step}",
             attack="Diffusion"
         )
-        save_confusion_matrix_plot(data_dict["y_test"], torch.argmax(dnn_model(x_adv_diffusion), dim=1).cpu().numpy(), label_encoder.classes_, f"{RESULTS_DIR}/confusion_matrix_Diffusion_Step_{capped_step}.png")
+        save_confusion_matrix_and_data(y_true, y_pred, label_encoder.classes_, f"results/confusion_matrix_Diffusion_Step_{step}.png", f"results/confusion_matrix_Diffusion_Step_{step}.csv")
 
     # TTOPA Recovery for Diffusion
     print("\nRunning TTOPA for Diffusion...")
     for step in [10, 100, 300, 400]:
         print(f"\nTTOPA Recovery Step: {step}")
         x_recovered_diffusion = ttpa_improved(dnn_model, x_adv_diffusion)
-        master_df = evaluate_classifier(
+        master_df, y_true, y_pred = evaluate_classifier(
             dnn_model,
             DataLoader(TensorDataset(x_recovered_diffusion, torch.tensor(data_dict["y_test"])), batch_size=256),
             label_encoder,
@@ -116,7 +116,7 @@ def main():
             step=f"TTOPA_Step_{step}",
             attack="Diffusion"
         )
-        save_confusion_matrix_plot(data_dict["y_test"], torch.argmax(dnn_model(x_recovered_diffusion), dim=1).cpu().numpy(), label_encoder.classes_, f"{RESULTS_DIR}/confusion_matrix_Diffusion_TTOPA_Step_{step}.png")
+        save_confusion_matrix_and_data(y_true, y_pred, label_encoder.classes_, f"results/confusion_matrix_Diffusion_TTOPA_Step_{step}.png", f"results/confusion_matrix_Diffusion_TTOPA_Step_{step}.csv")
 
     # Save evaluation results
     master_df.to_csv(os.path.join(RESULTS_DIR, "f1_degradation_ttopa_recovery.csv"), index=False)
