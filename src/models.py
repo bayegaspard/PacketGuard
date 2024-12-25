@@ -7,33 +7,25 @@ from config import DIFFUSION_PARAMS, DEVICE
 
 # models.py
 
-import torch.nn as nn
+import numpy as np
 import torch
 import torch.nn.functional as F
 from config import DIFFUSION_PARAMS, DEVICE
 
 class Net(nn.Module):
-    def __init__(self, input_size, num_classes, hidden_sizes=[256, 128], activation='relu'):
+    def __init__(self, input_size, num_classes):
         super(Net, self).__init__()
-        self.hidden_layers = nn.ModuleList()
-        previous_size = input_size
-        for hidden_size in hidden_sizes:
-            self.hidden_layers.append(nn.Linear(previous_size, hidden_size))
-            if activation.lower() == 'relu':
-                self.hidden_layers.append(nn.ReLU())
-            elif activation.lower() == 'tanh':
-                self.hidden_layers.append(nn.Tanh())
-            else:
-                raise ValueError(f"Unsupported activation: {activation}")
-            self.hidden_layers.append(nn.Dropout(0.5))  # Added dropout
-            previous_size = hidden_size
-        self.output_layer = nn.Linear(previous_size, num_classes)
-    
+        self.device = DEVICE  # Add this line
+        self.fc1 = nn.Linear(input_size, 128)
+        self.fc2 = nn.Linear(128, 64)
+        self.fc3 = nn.Linear(64, num_classes)
+
     def forward(self, x):
-        for layer in self.hidden_layers:
-            x = layer(x)
-        out = self.output_layer(x)
-        return out
+        x = F.relu(self.fc1(x))
+        x = F.relu(self.fc2(x))
+        x = self.fc3(x)
+        return x
+
 
     def predict_proba(self, x):
         """
@@ -51,9 +43,6 @@ class Net(nn.Module):
             probabilities = torch.softmax(outputs, dim=1)
         return probabilities
 
-import numpy as np
-import torch
-from torch.nn.functional import softmax
 
 class VarMaxModel:
     """
@@ -62,22 +51,27 @@ class VarMaxModel:
     """
 
     def __init__(self, model, top_two_threshold=0.5, varmax_threshold=0.1):
-        """
-        Initializes the VarMaxModel.
-        
-        Parameters:
-            model (nn.Module): The base neural network model.
-            top_two_threshold (float): Threshold for Top Two Difference.
-            varmax_threshold (float): Threshold for VarMax variance.
-        """
         self.model = model
         self.top_two_threshold = top_two_threshold
         self.varmax_threshold = varmax_threshold
 
     def forward(self, x):
         """
-        Simulates the `forward` method of a PyTorch model, classifying
-        inputs based on VarMax logic.
+        Simulates the `forward` method of a PyTorch model.
+
+        Parameters:
+            x (torch.Tensor): Input data tensor.
+
+        Returns:
+            torch.Tensor: Logits (not predictions).
+        """
+        with torch.no_grad():
+            logits = self.model(x)
+        return logits
+
+    def classify(self, x):
+        """
+        Classify inputs based on VarMax logic.
 
         Parameters:
             x (torch.Tensor): Input data tensor.
@@ -85,12 +79,11 @@ class VarMaxModel:
         Returns:
             torch.Tensor: Predicted labels.
         """
-        with torch.no_grad():
-            logits = self.model(x)
-            softmax_outputs = softmax(logits, dim=1)
-            top_probs, top_indices = torch.topk(softmax_outputs, 2, dim=1)
-            top_diff = (top_probs[:, 0] - top_probs[:, 1]).cpu().numpy()
-            logits_np = logits.cpu().numpy()
+        logits = self.forward(x)
+        softmax_outputs = torch.softmax(logits, dim=1)
+        top_probs, top_indices = torch.topk(softmax_outputs, 2, dim=1)
+        top_diff = (top_probs[:, 0] - top_probs[:, 1]).cpu().numpy()
+        logits_np = logits.cpu().numpy()
 
         predictions = []
         for i in range(x.size(0)):
@@ -106,87 +99,99 @@ class VarMaxModel:
                     predictions.append(top_indices[i, 0].item())
         return torch.tensor(predictions)
 
+    def __call__(self, x):
+        """
+        Makes the VarMaxModel callable.
+
+        Parameters:
+            x (torch.Tensor): Input data tensor.
+
+        Returns:
+            torch.Tensor: Predicted labels.
+        """
+        return self.classify(x)
+
+    def eval(self):
+        """Dummy method for compatibility with PyTorch evaluation mode."""
+        pass
 
 
 class DiffusionModel(nn.Module):
-    def __init__(self, input_dim, noise_steps=DIFFUSION_PARAMS["noise_steps"], 
-                 beta_start=DIFFUSION_PARAMS["beta_start"], beta_end=DIFFUSION_PARAMS["beta_end"]):
+    def __init__(self, input_dim, noise_steps=1000, beta_start=1e-4, beta_end=0.02):
         super(DiffusionModel, self).__init__()
         self.input_dim = input_dim
         self.noise_steps = noise_steps
-        self.beta = self.prepare_noise_schedule(beta_start, beta_end).to(DEVICE)
+        self.beta = torch.linspace(beta_start, beta_end, noise_steps).to(DEVICE)
         self.alpha = 1.0 - self.beta
         self.alpha_hat = torch.cumprod(self.alpha, dim=0).to(DEVICE)
-    
-        # Neural network layers for the diffusion model
+        
+        # Define network layers
         self.fc1 = nn.Linear(input_dim + 1, 256).to(DEVICE)
         self.relu = nn.ReLU()
         self.fc2 = nn.Linear(256, input_dim).to(DEVICE)
-    
-    def prepare_noise_schedule(self, beta_start, beta_end):
-        return torch.linspace(beta_start, beta_end, self.noise_steps).to(DEVICE)
-    
+
     def noise_data(self, x, t):
+        """
+        Add noise to the data based on the diffusion process.
+        """
         batch_size = x.shape[0]
         t = t.view(-1)
         beta_t = self.beta[t].view(-1, 1).to(DEVICE)
         alpha_t = self.alpha_hat[t].view(-1, 1).to(DEVICE)
         noise = torch.randn_like(x).to(DEVICE)
-        x_t = torch.sqrt(alpha_t) * x + torch.sqrt(1 - alpha_t) * noise
-        return x_t, noise
-    
+        x_noisy = torch.sqrt(alpha_t) * x + torch.sqrt(1 - alpha_t) * noise
+        return x_noisy, noise
+
     def forward(self, x, t):
-        # Append normalized time step t as a scalar to the input
-        t_normalized = t.float() / self.noise_steps  # Normalize and convert to float
-        x_input = torch.cat([x, t_normalized.unsqueeze(1)], dim=1)  # Shape: (batch_size, input_dim + 1)
+        """
+        Forward pass for the diffusion model.
+        """
+        t_normalized = t.float() / self.noise_steps  # Normalize time step
+        x_input = torch.cat([x, t_normalized.unsqueeze(1)], dim=1)  # Concatenate time step
         x = self.fc1(x_input)
         x = self.relu(x)
         x = self.fc2(x)
         return x
-    
-    def generate_adversarial(self, x, t):
+
+    def generate(self, x, t):
+        """
+        Generate adversarial examples using the reverse diffusion process.
+        """
         self.eval()
         with torch.no_grad():
             batch_size = x.shape[0]
-            t_tensor = torch.tensor([t]*batch_size, device=DEVICE).long()
-            x_noisy, noise = self.noise_data(x.to(DEVICE), t_tensor)
+            # Ensure t is a scalar value or handle it correctly
+            if isinstance(t, torch.Tensor):
+                if t.numel() > 1:  # If t contains multiple elements
+                    t = t[0].item()  # Use the first element as scalar
+                else:
+                    t = t.item()
+            
+            t_tensor = torch.full((batch_size,), t, device=DEVICE, dtype=torch.long)
+            x_noisy, _ = self.noise_data(x.to(DEVICE), t_tensor)
             predicted_noise = self(x_noisy, t_tensor)
             alpha_t = self.alpha[t_tensor].view(-1, 1).to(DEVICE)
             alpha_hat_t = self.alpha_hat[t_tensor].view(-1, 1).to(DEVICE)
             x_adv = (1 / torch.sqrt(alpha_t)) * (
                 x_noisy - ((1 - alpha_t) / torch.sqrt(1 - alpha_hat_t)) * predicted_noise
             )
-        self.train()
         return x_adv
 
 
-class FGSM:
-    """
-    Class to implement the Fast Gradient Sign Method (FGSM) for generating adversarial examples.
-    """
-    def __init__(self, model, epsilon):
-        """
-        Initializes the FGSM class.
 
-        Parameters:
-            model (torch.nn.Module): The trained model to attack.
-            epsilon (float): The magnitude of the perturbation.
-        """
-        self.model = model
+
+
+class FGSM:
+    def __init__(self, model, epsilon):
+        self.model = model.to(DEVICE)  # Ensure model is on the correct device
         self.epsilon = epsilon
 
     def generate(self, x, y):
-        """
-        Generates adversarial examples.
+        # Ensure inputs are on the same device as the model
+        x = x.to(DEVICE)
+        y = y.to(DEVICE)
 
-        Parameters:
-            x (torch.Tensor): Original input samples.
-            y (torch.Tensor): True labels corresponding to the input samples.
-
-        Returns:
-            torch.Tensor: Adversarial examples.
-        """
-        # Ensure the model is in evaluation mode
+        # Model evaluation mode
         self.model.eval()
 
         # Enable gradient computation
@@ -210,25 +215,11 @@ class FGSM:
         x_adv = torch.clamp(x_adv, 0, 1)
 
         return x_adv
+
     
 
-
 class GeneticAlgorithmAttack:
-    """
-    Class to implement a Genetic Algorithm-based adversarial attack.
-    """
     def __init__(self, model, num_classes, population_size=20, mutation_rate=0.1, max_generations=10, fitness_function=None):
-        """
-        Initializes the GeneticAlgorithmAttack class.
-
-        Parameters:
-            model (torch.nn.Module): The trained model to attack.
-            num_classes (int): The number of output classes of the model.
-            population_size (int): Number of adversarial examples in each generation.
-            mutation_rate (float): Probability of mutation for each feature.
-            max_generations (int): Maximum number of generations for the genetic algorithm.
-            fitness_function (callable, optional): Custom fitness function. If None, misclassification confidence is used.
-        """
         self.model = model
         self.num_classes = num_classes
         self.population_size = population_size
@@ -237,99 +228,68 @@ class GeneticAlgorithmAttack:
         self.fitness_function = fitness_function
 
     def generate(self, x, y):
-        """
-        Generates adversarial examples using a genetic algorithm.
-
-        Parameters:
-            x (torch.Tensor): Original input samples.
-            y (torch.Tensor): True labels corresponding to the input samples.
-
-        Returns:
-            torch.Tensor: Adversarial examples.
-        """
-        # Ensure the model is in evaluation mode
         self.model.eval()
-
-        # Convert inputs to numpy for manipulation
         x_np = x.cpu().detach().numpy()
         y_np = y.cpu().detach().numpy()
 
         # Initialize population
-        population = np.repeat(x_np, self.population_size, axis=0)
-
-        # Apply random perturbations to create the initial population
+        population = np.repeat(x_np, self.population_size // len(x_np), axis=0)
         perturbations = np.random.uniform(-0.1, 0.1, population.shape)
         population += perturbations
-        population = np.clip(population, 0, 1)  # Ensure inputs are valid
+        population = np.clip(population, 0, 1)
 
         for generation in range(self.max_generations):
-            # Evaluate fitness of each individual in the population
-            fitness_scores = self._evaluate_fitness(population, y_np)
+            subset_y_true = np.tile(y_np, len(population) // len(y_np) + 1)[:len(population)]
 
-            # Select the top individuals based on fitness scores
-            top_indices = np.argsort(fitness_scores)[-self.population_size // 2:]
+            fitness_scores = self._evaluate_fitness(population, subset_y_true)
+
+            # Select top-performing individuals
+            top_indices = np.argsort(fitness_scores)[-self.population_size:]
             top_individuals = population[top_indices]
 
-            # Perform crossover to create new offspring
-            offspring = self._crossover(top_individuals)
+            if len(top_individuals) == 0:
+                print(f"Warning: No top individuals found in generation {generation}. Reinitializing population.")
+                top_individuals = population  # Use entire population as fallback
 
-            # Apply mutation to introduce diversity
+            offspring = self._crossover(top_individuals)
             offspring = self._mutate(offspring)
 
-            # Combine parents and offspring to form the new population
             population = np.vstack((top_individuals, offspring))
 
-        # Return the best adversarial examples based on fitness
-        best_indices = np.argsort(fitness_scores)[-x_np.shape[0]:]
+        best_indices = np.argsort(fitness_scores)[-len(x_np):]
         best_adversarial_examples = population[best_indices]
 
         return torch.tensor(best_adversarial_examples, dtype=torch.float32).to(x.device)
 
     def _evaluate_fitness(self, population, y_true):
-        """
-        Evaluates the fitness of each individual in the population.
+        assert len(population) == len(y_true), f"Population size ({len(population)}) must match y_true size ({len(y_true)})"
 
-        Parameters:
-            population (numpy.ndarray): Population of adversarial examples.
-            y_true (numpy.ndarray): True labels for the original inputs.
-
-        Returns:
-            numpy.ndarray: Fitness scores for each individual.
-        """
         population_tensor = torch.tensor(population, dtype=torch.float32).to(next(self.model.parameters()).device)
         with torch.no_grad():
             outputs = self.model(population_tensor)
             probs = torch.softmax(outputs, dim=1).cpu().numpy()
 
         if self.fitness_function:
-            # Use custom fitness function
             return np.array([self.fitness_function(probs[i], y_true[i]) for i in range(len(y_true))])
         else:
-            # Default: maximize the misclassification confidence
             fitness_scores = np.max(probs, axis=1)
-            fitness_scores[y_true == np.argmax(probs, axis=1)] = 0  # Penalize correct classifications
+            fitness_scores[np.array(y_true) == np.argmax(probs, axis=1)] = 0  # Penalize correct classifications
             return fitness_scores
 
     def _crossover(self, parents):
-        """
-        Performs crossover on the parent population to create offspring.
-
-        Parameters:
-            parents (numpy.ndarray): Array of parent individuals.
-
-        Returns:
-            numpy.ndarray: Array of offspring.
-        """
         num_parents = parents.shape[0]
+
+        if num_parents < 2:
+            print("Warning: Not enough parents for crossover. Cloning existing parents.")
+            return parents.copy()
+
         num_features = parents.shape[1]
         offspring = []
 
         for _ in range(self.population_size // 2):
-            # Select two random parents
             parent1_idx, parent2_idx = np.random.choice(num_parents, size=2, replace=False)
             parent1, parent2 = parents[parent1_idx], parents[parent2_idx]
 
-            # Perform uniform crossover
             mask = np.random.rand(num_features) > 0.5
             child = np.where(mask, parent1, parent2)
             offspring.append(child)
@@ -337,17 +297,9 @@ class GeneticAlgorithmAttack:
         return np.array(offspring)
 
     def _mutate(self, offspring):
-        """
-        Applies mutation to the offspring population.
-
-        Parameters:
-            offspring (numpy.ndarray): Array of offspring individuals.
-
-        Returns:
-            numpy.ndarray: Mutated offspring population.
-        """
         mutation_mask = np.random.rand(*offspring.shape) < self.mutation_rate
         mutations = np.random.uniform(-0.1, 0.1, offspring.shape)
         offspring[mutation_mask] += mutations[mutation_mask]
-        return np.clip(offspring, 0, 1)  # Ensure inputs are valid
+        return np.clip(offspring, 0, 1)
+
 

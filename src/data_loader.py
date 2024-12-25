@@ -1,5 +1,6 @@
-# data_loader.py
-
+import sys
+import os
+sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
 import os
 import numpy as np
 import pandas as pd
@@ -7,7 +8,6 @@ from sklearn.preprocessing import LabelEncoder, StandardScaler
 from sklearn.model_selection import train_test_split
 import torch
 from torch.utils.data import TensorDataset, DataLoader
-from tqdm import tqdm
 from config import (
     DATA_PATH, SELECTED_CLASSES,
     MAX_SAMPLES_PER_CLASS, BATCH_SIZE, DEVICE
@@ -51,7 +51,7 @@ def load_and_preprocess_data():
     print("\nEncoded Classes:", label_encoder.classes_)
 
     # Convert features to numeric
-    features_df = data.drop('Label', axis=1)
+    features_df = data.drop('Label', axis=1)  # Fix: Define features_df here
     features_df = features_df.apply(pd.to_numeric, errors='coerce')
     features_df.fillna(0, inplace=True)
 
@@ -81,14 +81,15 @@ def load_and_preprocess_data():
     test_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE)
 
     return {
-        "features": features,             # List of feature names (length should be 77)
-        "features_df": features_df,       # DataFrame of features (optional, if needed)
+        "features": features,
+        "features_df": features_df,  # Now correctly defined
         "scaler": scaler,
         "label_encoder": label_encoder,
         "num_classes": num_classes,
         "train_loader": train_loader,
         "test_loader": test_loader,
-        "X_train": X_train,
-        "X_test": X_test,
-        "y_test": y_test
+        "X_train": X_train_tensor,
+        "X_test": X_test_tensor,
+        "y_train": y_train_tensor,
+        "y_test": y_test_tensor
     }

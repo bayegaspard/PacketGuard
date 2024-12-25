@@ -6,59 +6,15 @@ import matplotlib.pyplot as plt
 from config import RESULTS_DIR
 import pandas as pd
 
-def save_confusion_matrix_plot(cm, label_encoder, description=''):
-    """
-    Saves a confusion matrix plot.
-    
-    Parameters:
-        cm (numpy.ndarray): Confusion matrix.
-        label_encoder (LabelEncoder): Label encoder with class names.
-        description (str): Description for the plot title.
-    
-    Returns:
-        None
-    """
-    plt.figure(figsize=(12, 10))
-    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues',
-                xticklabels=list(label_encoder.classes_) + ['Unknown'],
-                yticklabels=list(label_encoder.classes_) + ['Unknown'])
-    plt.title(f'Confusion Matrix ({description})', fontsize=16)
-    plt.xlabel('Predicted Label', fontsize=14)
-    plt.ylabel('True Label', fontsize=14)
-    plt.xticks(rotation=45, ha='right', fontsize=10)
-    plt.yticks(rotation=45, va='center', fontsize=10)
-    plt.tight_layout()
-    plot_path = os.path.join(RESULTS_DIR, f'confusion_matrix_{description}.png')
-    plt.savefig(plot_path, dpi=300)
-    plt.close()
-    print(f"Confusion matrix plot saved as '{plot_path}'")
+import matplotlib.pyplot as plt
+from sklearn.metrics import ConfusionMatrixDisplay
 
-    
+def save_confusion_matrix_plot(y_true, y_pred, labels, filename):
+    disp = ConfusionMatrixDisplay.from_predictions(y_true, y_pred, display_labels=labels, cmap='viridis')
+    disp.figure_.savefig(filename)
+    print(f"Confusion matrix saved to {filename}")
+    plt.close(disp.figure_)  # Close the figure to free memory
 
-def save_sensitivity_plot(sensitivity_per_feature, features, description=''):
-    """
-    Saves a sensitivity analysis plot.
-    
-    Parameters:
-        sensitivity_per_feature (numpy.ndarray): Array of sensitivity scores.
-        features (pd.DataFrame): DataFrame containing feature names.
-        description (str): Description for the plot title.
-    
-    Returns:
-        None
-    """
-    plt.figure(figsize=(20, 10))
-    sns.barplot(x=list(range(len(sensitivity_per_feature))), y=sensitivity_per_feature, color='blue')
-    plt.title(f"Sensitivity of Classifier to Input Features ({description})", fontsize=20)
-    plt.xlabel("Feature Index", fontsize=14)
-    plt.ylabel("Average Absolute Gradient", fontsize=14)
-    plt.xticks(ticks=list(range(len(sensitivity_per_feature))), labels=features.columns, rotation=90, fontsize=8)
-    plt.yticks(fontsize=12)
-    plt.tight_layout()
-    plot_path = os.path.join(RESULTS_DIR, f'classifier_feature_sensitivity_{description}.png')
-    plt.savefig(plot_path, dpi=300)
-    plt.close()
-    print(f"Classifier feature sensitivity plot saved as '{plot_path}'")
 
 def save_roc_curve_plot(fpr, tpr, roc_auc, optimal_threshold, description=''):
     """
@@ -97,7 +53,7 @@ def append_metrics(master_df, metrics):
     Appends a list of metric dictionaries to the master DataFrame.
 
     Parameters:
-        master_df (pd.DataFrame): The master DataFrame to append metrics to.
+        master_df (pd.DataFrame or None): The master DataFrame to append metrics to. Can be None.
         metrics (list of dict): List containing metric dictionaries.
 
     Returns:
@@ -107,12 +63,16 @@ def append_metrics(master_df, metrics):
         raise TypeError("Metrics should be a list of dictionaries.")
 
     new_metrics_df = pd.DataFrame(metrics)
+
+    if master_df is None:
+        print(f"Initializing master_df with metrics of shape {new_metrics_df.shape}")
+        master_df = new_metrics_df
+    else:
+        print(f"Appending metrics with shape {new_metrics_df.shape} to master_df with shape {master_df.shape}")
+        master_df = pd.concat([master_df, new_metrics_df], ignore_index=True)
     
-    # Debugging: Print shapes before concatenation
-    print(f"Appending metrics with shape {new_metrics_df.shape} to master_df with shape {master_df.shape}")
-    
-    master_df = pd.concat([master_df, new_metrics_df], ignore_index=True)
     return master_df
+
 
 
 def save_results(master_df, results_dir):

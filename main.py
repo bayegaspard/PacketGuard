@@ -1,114 +1,126 @@
 import sys
-sys.path.append('src')
-
 import os
+sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
 import torch
-import pandas as pd
-from src.data_loader import load_and_preprocess_data
-from src.defense import ttpa_improved
-from src.evaluation import evaluate_classifier
-from src.utils import append_metrics, save_results
-from src.models import Net, VarMaxModel, DiffusionModel, FGSM, GeneticAlgorithmAttack
-from src.train import train_classifier, train_diffusion_model
-from src.config import MODEL_CONFIGS, TRAINING_PARAMS, DEVICE, RESULTS_DIR
-from src.sensitivity_analysis import sensitivity_analysis_classifier
+import matplotlib
+matplotlib.use('Agg')
 
+import pandas as pd
+from torch.utils.data import DataLoader, TensorDataset
+from src.data_loader import load_and_preprocess_data
+from src.models import Net, FGSM, GeneticAlgorithmAttack, DiffusionModel
+from src.sensitivity_analysis import sensitivity_analysis_classifier, shap_analysis
+from src.utils import save_confusion_matrix_plot
+from src.evaluation import evaluate_classifier
+from src.defense import ttpa_improved
+from src.train import train_classifier
+from config import DEVICE, RESULTS_DIR
 
 def main():
-    print("Starting Advanced Adversarial Workflow...")
-
     # Load and preprocess data
-    print("Loading and preprocessing data...")
+    print("\nLoading and preprocessing data...")
     data_dict = load_and_preprocess_data()
-    print("Data loaded successfully.")
-
     features = data_dict["features"]
-    label_encoder = data_dict["label_encoder"]
-    num_classes = data_dict["num_classes"]
-    train_loader = data_dict["train_loader"]
     test_loader = data_dict["test_loader"]
-    X_test = data_dict["X_test"]
-    y_test = data_dict["y_test"]
+    train_loader = data_dict["train_loader"]
+    num_classes = data_dict["num_classes"]
+    label_encoder = data_dict["label_encoder"]
 
-    # Initialize a Master DataFrame to collect all metrics
-    master_df = pd.DataFrame(columns=["Model", "Perturbation_Step", "Metric_Type", "Metric_Name", "Metric_Value"])
+    # Initialize the model
+    print("\nInitializing the model...")
+    dnn_model = Net(input_size=len(features), num_classes=num_classes).to(DEVICE)
 
-    for config in MODEL_CONFIGS:
-        print(f"\n=== Training DNN Classifier: {config['description']} ===")
-        
-        # Train DNN Classifier
-        dnn_model = Net(
-            input_size=X_test.shape[1],
-            num_classes=num_classes,
-            hidden_sizes=config["hidden_sizes"],
-            activation=config["activation"]
-        ).to(DEVICE)
-        
-        criterion = torch.nn.CrossEntropyLoss()
-        optimizer = torch.optim.Adam(dnn_model.parameters(), lr=TRAINING_PARAMS["learning_rate_classifier"])
-        
-        train_classifier(
-            dnn_model, train_loader, criterion, optimizer,
-            TRAINING_PARAMS["num_epochs_classifier"],
-            test_loader, DEVICE, master_df, f"{config['description']}_DNN"
+    # Load pre-trained model or train if weights are missing
+    model_path = "default_model.pth"
+    if os.path.exists(model_path):
+        print("\nLoading pre-trained model...")
+        checkpoint = torch.load(model_path, map_location=DEVICE)
+        dnn_model.load_state_dict(checkpoint)
+    else:
+        print("\nNo pre-trained model found. Training a new model...")
+        train_classifier(dnn_model, train_loader, num_epochs=10, learning_rate=0.001)
+        torch.save(dnn_model.state_dict(), model_path)
+
+    # Evaluate the classifier on clean data
+    print("\nEvaluating the classifier on clean data...")
+    master_df = pd.DataFrame(columns=["Attack", "Model", "Step", "F1_Score"])
+    master_df = evaluate_classifier(dnn_model, test_loader, label_encoder, "Default_Model", features, master_df)
+
+    # FGSM Attack
+    print("\nRunning FGSM Attack...")
+    fgsm = FGSM(dnn_model, epsilon=0.1)
+    for step in [10, 100, 500, 1000]:
+        print(f"\nFGSM Attack Step: {step} (steps ignored for FGSM, using default epsilon)")
+        x_adv = fgsm.generate(data_dict["X_test"], data_dict["y_test"])
+        master_df = evaluate_classifier(
+            dnn_model,
+            DataLoader(TensorDataset(x_adv, torch.tensor(data_dict["y_test"])), batch_size=256),
+            label_encoder,
+            "Default_Model_FGSM_adv",
+            features,
+            master_df,
+            step=f"FGSM_Step_{step}",
+            attack="FGSM"
         )
-        
-        # Evaluate DNN on clean data
-        print("\nEvaluating DNN on clean test data...")
-        evaluate_classifier(dnn_model, test_loader, label_encoder, f"{config['description']}_DNN_clean", features, master_df)
+        save_confusion_matrix_plot(data_dict["y_test"], torch.argmax(dnn_model(x_adv), dim=1).cpu().numpy(), label_encoder.classes_, f"{RESULTS_DIR}/confusion_matrix_FGSM_Step_{step}.png")
 
-        # Perform adversarial attacks (FGSM and Genetic)
-        fgsm = FGSM(dnn_model, epsilon=0.03)
-        genetic_attack = GeneticAlgorithmAttack(dnn_model, num_classes, max_generations=10)
-
-        for attack, name in [(fgsm, "FGSM"), (genetic_attack, "Genetic")]:
-            print(f"Applying {name} attack on DNN...")
-            x_adv = attack.generate(X_test, y_test)
-            evaluate_classifier(dnn_model, test_loader, label_encoder, f"{config['description']}_DNN_{name}_adv", features, master_df)
-
-        # Train and use Diffusion Model for attack
-        print(f"\n=== Training Diffusion Model for {config['description']} ===")
-        diffusion_model = DiffusionModel(input_dim=X_test.shape[1]).to(DEVICE)
-        diffusion_criterion = torch.nn.MSELoss()
-        diffusion_optimizer = torch.optim.Adam(
-            diffusion_model.parameters(), lr=TRAINING_PARAMS["learning_rate_diffusion"]
+    # TTOPA Recovery for FGSM
+    print("\nRunning TTOPA for FGSM...")
+    for step in [10, 100, 300, 400]:
+        print(f"\nTTOPA Recovery Step: {step}")
+        x_recovered_fgsm = ttpa_improved(dnn_model, x_adv)
+        master_df = evaluate_classifier(
+            dnn_model,
+            DataLoader(TensorDataset(x_recovered_fgsm, torch.tensor(data_dict["y_test"])), batch_size=256),
+            label_encoder,
+            "Default_Model_FGSM_ttopa",
+            features,
+            master_df,
+            step=f"TTOPA_Step_{step}",
+            attack="FGSM"
         )
+        save_confusion_matrix_plot(data_dict["y_test"], torch.argmax(dnn_model(x_recovered_fgsm), dim=1).cpu().numpy(), label_encoder.classes_, f"{RESULTS_DIR}/confusion_matrix_FGSM_TTOPA_Step_{step}.png")
 
-        train_diffusion_model(
-            diffusion_model, train_loader, diffusion_criterion, diffusion_optimizer,
-            num_epochs=TRAINING_PARAMS["num_epochs_diffusion"], device=DEVICE
+    # Diffusion Attack
+    print("\nRunning Diffusion Attack...")
+    diffusion_attack = DiffusionModel(input_dim=len(features)).to(DEVICE)
+    for step in [10, 100, 500, 1000]:
+        # Cap the step value at 999
+        capped_step = min(step, 999)
+        print(f"\nDiffusion Attack Step: {capped_step}")
+        x_adv_diffusion = diffusion_attack.generate(data_dict["X_test"], t=capped_step)
+        master_df = evaluate_classifier(
+            dnn_model,
+            DataLoader(TensorDataset(x_adv_diffusion, torch.tensor(data_dict["y_test"])), batch_size=256),
+            label_encoder,
+            "Default_Model_Diffusion_adv",
+            features,
+            master_df,
+            step=f"Diffusion_Step_{capped_step}",
+            attack="Diffusion"
         )
-        print("Diffusion model training completed.")
+        save_confusion_matrix_plot(data_dict["y_test"], torch.argmax(dnn_model(x_adv_diffusion), dim=1).cpu().numpy(), label_encoder.classes_, f"{RESULTS_DIR}/confusion_matrix_Diffusion_Step_{capped_step}.png")
 
-        print("Generating adversarial examples using Diffusion Model...")
-        x_diff_adv = diffusion_model.generate_adversarial(X_test, t=300)
-        evaluate_classifier(dnn_model, test_loader, label_encoder, f"{config['description']}_DNN_Diffusion_adv", features, master_df)
+    # TTOPA Recovery for Diffusion
+    print("\nRunning TTOPA for Diffusion...")
+    for step in [10, 100, 300, 400]:
+        print(f"\nTTOPA Recovery Step: {step}")
+        x_recovered_diffusion = ttpa_improved(dnn_model, x_adv_diffusion)
+        master_df = evaluate_classifier(
+            dnn_model,
+            DataLoader(TensorDataset(x_recovered_diffusion, torch.tensor(data_dict["y_test"])), batch_size=256),
+            label_encoder,
+            "Default_Model_Diffusion_ttopa",
+            features,
+            master_df,
+            step=f"TTOPA_Step_{step}",
+            attack="Diffusion"
+        )
+        save_confusion_matrix_plot(data_dict["y_test"], torch.argmax(dnn_model(x_recovered_diffusion), dim=1).cpu().numpy(), label_encoder.classes_, f"{RESULTS_DIR}/confusion_matrix_Diffusion_TTOPA_Step_{step}.png")
 
-        # Apply TTOPA on DNN
-        print("\nApplying TTOPA on DNN...")
-        x_ttap = ttpa_improved(dnn_model, x_diff_adv, num_steps=400, learning_rate=0.001, alpha=0.9, confidence_threshold=0.7)
-        evaluate_classifier(dnn_model, test_loader, label_encoder, f"{config['description']}_DNN_TTOPA", features, master_df)
-
-        # Evaluate VarMax Classifier
-        print(f"\n=== Evaluating VarMax Classifier for {config['description']} ===")
-        varmax_model = VarMaxModel(dnn_model)
-
-        # VarMax on clean data
-        evaluate_classifier(varmax_model, test_loader, label_encoder, f"{config['description']}_VarMax_clean", features, master_df)
-
-        # Adversarial attacks on VarMax (FGSM, Genetic, Diffusion)
-        for attack, name in [(fgsm, "FGSM"), (genetic_attack, "Genetic"), (x_diff_adv, "Diffusion")]:
-            print(f"Applying {name} attack on VarMax...")
-            if name == "Diffusion":
-                x_adv = x_diff_adv  # Use pre-generated diffusion adversarial examples
-            else:
-                x_adv = attack.generate(X_test, y_test)
-            evaluate_classifier(varmax_model, test_loader, label_encoder, f"{config['description']}_VarMax_{name}_adv", features, master_df)
-
-    # Save all results
-    print("\nSaving results...")
-    save_results(master_df, RESULTS_DIR)
-    print("All results saved successfully.")
+    # Save evaluation results
+    master_df.to_csv(os.path.join(RESULTS_DIR, "f1_degradation_ttopa_recovery.csv"), index=False)
+    print("\nF1 degradation and TTOPA recovery results saved to 'f1_degradation_ttopa_recovery.csv'.")
 
 if __name__ == "__main__":
     main()

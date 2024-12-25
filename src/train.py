@@ -22,100 +22,52 @@ from tqdm import tqdm
 from evaluation import evaluate_classifier
 from utils import append_metrics  # Ensure correct import
 
-def train_classifier(model, train_loader, criterion, optimizer, num_epochs, validation_loader, device, master_df, model_description='', label_encoder=None):
-    """
-    Trains the classifier model and appends training and validation metrics to master_df.
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from tqdm import tqdm
 
-    Args:
-        model (torch.nn.Module): The classifier model to train.
+def train_classifier(model, train_loader, num_epochs=10, learning_rate=0.001):
+    """
+    Train the model on the provided training data.
+
+    Parameters:
+        model (torch.nn.Module): The model to train.
         train_loader (DataLoader): DataLoader for training data.
-        criterion (torch.nn.Module): Loss function.
-        optimizer (torch.optim.Optimizer): Optimizer.
-        num_epochs (int): Number of training epochs.
-        validation_loader (DataLoader): DataLoader for validation data.
-        device (torch.device): Device to train on.
-        master_df (pd.DataFrame): DataFrame to append metrics.
-        model_description (str): Description of the model configuration.
-        label_encoder (LabelEncoder): Label encoder for class names.
+        num_epochs (int): Number of epochs to train.
+        learning_rate (float): Learning rate for the optimizer.
 
     Returns:
-        Tuple: Lists of training losses, validation F1 scores, accuracies, ROC AUC scores, and updated master_df.
+        None
     """
-    train_losses = []
-    val_f1_scores = []
-    val_accuracy_scores = []
-    val_roc_auc_scores = []
-    
+    criterion = nn.CrossEntropyLoss()
+    optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+
     for epoch in range(num_epochs):
         model.train()
         running_loss = 0.0
-        for inputs, labels in tqdm(train_loader, desc=f"Training Epoch {epoch+1}/{num_epochs}"):
-            inputs, labels = inputs.to(device), labels.to(device)
+        correct = 0
+        total = 0
+        
+        print(f"Epoch {epoch + 1}/{num_epochs}")
+        for data, labels in tqdm(train_loader, desc="Training"):
+            data, labels = data.to(model.device), labels.to(model.device)
+
             optimizer.zero_grad()
-            outputs = model(inputs)
+            outputs = model(data)
             loss = criterion(outputs, labels)
             loss.backward()
             optimizer.step()
+
             running_loss += loss.item()
-        
-        avg_loss = running_loss / len(train_loader)
-        train_losses.append(avg_loss)
-        
-        # Evaluation on validation set
-        val_f1, val_accuracy, val_roc_auc = evaluate_classifier(
-            model, validation_loader, label_encoder=label_encoder,
-            description=f"{model_description}_validation", features=None, master_df=None
-        )
-        val_f1_scores.append(val_f1)
-        val_accuracy_scores.append(val_accuracy)
-        val_roc_auc_scores.append(val_roc_auc)
-        
-        # Append metrics to master_df
-        training_metrics = [{
-            'Model': model_description,
-            'Perturbation_Step': None,
-            'Epoch': epoch + 1,
-            'Metric_Type': 'Training',
-            'Metric_Name': 'Loss',
-            'Metric_Value': avg_loss
-        }]
-        
-        validation_metrics = [
-            {
-                'Model': model_description,
-                'Perturbation_Step': None,
-                'Epoch': epoch + 1,
-                'Metric_Type': 'Validation',
-                'Metric_Name': 'F1_Score',
-                'Metric_Value': val_f1
-            },
-            {
-                'Model': model_description,
-                'Perturbation_Step': None,
-                'Epoch': epoch + 1,
-                'Metric_Type': 'Validation',
-                'Metric_Name': 'Accuracy',
-                'Metric_Value': val_accuracy
-            },
-            {
-                'Model': model_description,
-                'Perturbation_Step': None,
-                'Epoch': epoch + 1,
-                'Metric_Type': 'Validation',
-                'Metric_Name': 'ROC_AUC',
-                'Metric_Value': val_roc_auc
-            }
-        ]
-        
-        # Combine all metrics
-        all_metrics = training_metrics + validation_metrics
-        
-        # Append to master_df using the utility function
-        master_df = append_metrics(master_df, all_metrics)
-        
-        print(f"Epoch {epoch+1}/{num_epochs} completed. Loss: {avg_loss:.4f}, F1: {val_f1:.4f}, Accuracy: {val_accuracy:.4f}, ROC AUC: {val_roc_auc}")
-    
-    return train_losses, val_f1_scores, val_accuracy_scores, val_roc_auc_scores, master_df
+            _, predicted = torch.max(outputs, 1)
+            total += labels.size(0)
+            correct += (predicted == labels).sum().item()
+
+        epoch_loss = running_loss / len(train_loader)
+        epoch_accuracy = correct / total
+        print(f"Loss: {epoch_loss:.4f}, Accuracy: {epoch_accuracy:.4f}")
+
 
 def train_diffusion_model(diffusion_model, train_loader, criterion, optimizer, num_epochs=5, device=DEVICE):
     """
