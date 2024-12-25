@@ -112,7 +112,9 @@ def main():
     print("\nRunning TTOPA for Diffusion...")
     for step in config["ttopa_steps"]:
         print(f"\nTTOPA Recovery Step: {step}")
-        x_recovered_diffusion = ttpa_improved(model, x_adv_diffusion)
+        x_recovered_diffusion, grad_norms, losses = ttpa_improved(
+    model, x_adv_diffusion, y_true, num_steps=100, learning_rate=0.01, device=DEVICE
+)
         master_df, y_true, y_pred = evaluate_classifier(
             model,
             DataLoader(TensorDataset(x_recovered_diffusion, torch.tensor(data_dict["y_test"])), batch_size=256),

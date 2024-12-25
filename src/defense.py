@@ -1,52 +1,67 @@
 import torch
-from torch.nn import CrossEntropyLoss
-from torch.optim import Adam
-from config import DEVICE
+import torch.nn as nn
+import torch.optim as optim
 
-def ttpa_improved(model, x_adv, num_steps=800, learning_rate=0.001, alpha=0.9, confidence_threshold=0.7):
+
+def ttpa_improved(model, x_adv, y_true, num_steps=100, learning_rate=0.005, device='cpu'):
     """
-    Improved TTOPA using a hybrid loss function and pseudo-labeling with confidence thresholding.
-    
+    Test-Time Open Packet Adaptation (TTOPA) function for adversarial recovery.
+
     Parameters:
         model (nn.Module): Trained classification model.
-        x_adv (torch.Tensor): Adversarial examples tensor.
+        x_adv (torch.Tensor): Adversarial examples.
+        y_true (torch.Tensor): True labels for the adversarial examples.
         num_steps (int): Number of adaptation steps.
-        learning_rate (float): Learning rate for optimizer.
-        alpha (float): Weighting factor between entropy and confidence losses.
-        confidence_threshold (float): Threshold for confidence in pseudo-labeling.
-    
+        learning_rate (float): Learning rate for adaptation.
+        device (str): Device to run the adaptation (e.g., 'cpu' or 'cuda').
+
     Returns:
-        torch.Tensor: Adapted adversarial examples.
+        torch.Tensor: Adapted examples after applying TTOPA.
+        list: List of gradient norms per adaptation step.
+        list: List of loss values per adaptation step.
     """
-    model.eval()
-    x_adapted = x_adv.clone().detach().requires_grad_(True).to(DEVICE)
+    # Ensure model is on the correct device
+    model.to(device)
+    model.eval()  # Set model to evaluation mode
 
-    optimizer_ttap = torch.optim.Adam([x_adapted], lr=learning_rate)
+    # Ensure y_true is a tensor and moved to the correct device
+    if isinstance(y_true, list):
+        y_true = torch.tensor(y_true, dtype=torch.long).to(device)
+    else:
+        y_true = y_true.to(device)
 
-    for step_num in range(num_steps):
-        optimizer_ttap.zero_grad()
+    # Clone, detach, and explicitly set requires_grad=True for x_adapted
+    x_adapted = x_adv.clone().detach().to(device).requires_grad_(True)
+
+    # Use an optimizer for adapting the adversarial examples
+    optimizer = optim.Adam([x_adapted], lr=learning_rate)
+
+    # Lists to store gradient norms and loss values for each step
+    grad_norms = []
+    losses = []
+
+    criterion = nn.CrossEntropyLoss()
+
+    for step in range(num_steps):
+        print(step)
+        optimizer.zero_grad()
+
+        # Forward pass
         outputs = model(x_adapted)
-        probabilities = torch.nn.functional.softmax(outputs, dim=1)
+        loss = criterion(outputs, y_true)
 
-        # Hybrid Loss: Entropy Minimization + Confidence Maximization
-        entropy_loss = -torch.mean(torch.sum(probabilities * torch.log(probabilities + 1e-8), dim=1))
-        confidence_loss = 1 - torch.mean(torch.max(probabilities, dim=1)[0])
-        hybrid_loss = alpha * entropy_loss + (1 - alpha) * confidence_loss
+        # Backward pass
+        loss.backward()
+        grad_norm = x_adapted.grad.norm().item()  # Compute gradient norm
+        grad_norms.append(grad_norm)
+        losses.append(loss.item())
 
-        # Input Regularization (L2)
-        l2_reg = torch.norm(x_adapted - x_adv)
-        total_loss = hybrid_loss + 0.0001 * l2_reg  # Regularization coefficient
+        # Gradient descent step
+        optimizer.step()
 
-        # Perform backward pass with `retain_graph=True`
-        total_loss.backward(retain_graph=True)
-
-        # Gradient Clipping
-        torch.nn.utils.clip_grad_norm_([x_adapted], max_norm=1.0)
-
-        optimizer_ttap.step()
-
-        # Recreate x_adapted with clamping to avoid in-place operation
+        # Clamp the adapted examples to ensure valid input range
         with torch.no_grad():
-            x_adapted = torch.clamp(x_adapted, 0, 1).detach().requires_grad_(True)
+            x_adapted.clamp_(min=0, max=1)
 
-    return x_adapted.detach()
+    return x_adapted.detach(), grad_norms, losses
+
