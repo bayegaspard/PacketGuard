@@ -10,35 +10,42 @@ from sklearn.metrics import classification_report, f1_score
 
 from sklearn.metrics import classification_report, f1_score, confusion_matrix
 
-def evaluate_classifier(model, dataloader, label_encoder, model_name, features, master_df, step="", attack=""):
+# Inside evaluation.py
+def evaluate_classifier(model, data_loader, label_encoder, description, features, master_df, step=None, attack=None):
+    """
+    Evaluate the classifier on the given data loader and return metrics.
+    """
+    model.eval()
     y_true = []
     y_pred = []
-    model.eval()
-    
-    for data, labels in dataloader:
-        data, labels = data.to(DEVICE), labels.to(DEVICE)
-        with torch.no_grad():
-            outputs = model(data)
-        _, predictions = torch.max(outputs, dim=1)
-        y_true.extend(labels.cpu().numpy())
-        y_pred.extend(predictions.cpu().numpy())
-    
-    y_true_decoded = label_encoder.inverse_transform(y_true)
-    y_pred_decoded = label_encoder.inverse_transform(y_pred)
-    
-    f1 = f1_score(y_true, y_pred, average="macro")
-    print(f"F1-Score ({model_name}): {f1:.4f}")
-    print(f"\nClassification Report ({model_name}):\n{classification_report(y_true_decoded, y_pred_decoded)}")
-    
+
+    with torch.no_grad():
+        for inputs, labels in data_loader:
+            inputs = inputs.to(DEVICE)
+            outputs = model(inputs)
+            _, preds = torch.max(outputs, 1)
+            y_true.extend(labels.cpu().numpy())
+            y_pred.extend(preds.cpu().numpy())
+
+    # Compute F1 score and other metrics
+    f1 = f1_score(y_true, y_pred, average='weighted', zero_division=0)
+
+    # Create a new entry as a dictionary (not tuple)
     new_entry = {
         "Attack": attack,
-        "Model": model_name,
+        "Model": description,
         "Step": step,
         "F1_Score": f1
     }
+
+    # Append the new entry to the DataFrame
     master_df = pd.concat([master_df, pd.DataFrame([new_entry])], ignore_index=True)
-    
+
+    print(f"F1-Score ({description}): {f1:.4f}")
+    print(classification_report(y_true, y_pred, target_names=label_encoder.classes_))
+
     return master_df, y_true, y_pred
+
 
 
 

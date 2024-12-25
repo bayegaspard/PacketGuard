@@ -13,7 +13,7 @@ from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
 import matplotlib.pyplot as plt
 
 
-def save_confusion_matrix_and_data(y_true, y_pred, classes, save_path, csv_path):
+def save_confusion_matrix_plot(y_true, y_pred, classes, save_path, csv_path):
     """
     Save the confusion matrix plot and its data to a CSV file.
     """
