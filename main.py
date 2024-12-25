@@ -65,10 +65,10 @@ def main():
     for epsilon in config["fgsm_epsilons"]:
         print(f"\nFGSM Attack Epsilon: {epsilon}")
         fgsm = FGSM(model, epsilon=epsilon)
-        x_adv = fgsm.generate(data_dict["X_test"], data_dict["y_test"])
+        x_adv_fgsm = fgsm.generate(data_dict["X_test"], data_dict["y_test"])
         master_df, y_true, y_pred = evaluate_classifier(
             model,
-            DataLoader(TensorDataset(x_adv, torch.tensor(data_dict["y_test"])), batch_size=256),
+            DataLoader(TensorDataset(x_adv_fgsm, torch.tensor(data_dict["y_test"])), batch_size=256),
             label_encoder,
             f"Default_Model_{config['model_type']}_FGSM_adv",
             features,
@@ -78,11 +78,45 @@ def main():
         )
         save_confusion_matrix_plot(
             data_dict["y_test"],
-            torch.argmax(model(x_adv), dim=1).cpu().numpy(),
+            torch.argmax(model(x_adv_fgsm), dim=1).cpu().numpy(),
             label_encoder.classes_,
             f"results/confusion_matrix_FGSM_Epsilon_{epsilon}.png",
             f"results/confusion_matrix_FGSM_Epsilon_{epsilon}.csv"
         )
+
+        # TTOPA Recovery for FGSM
+    print("\nRunning TTOPA for FGSM...")
+    for step in config["ttopa_steps"]:
+        print(f"\nTTOPA Recovery Step: {step}")
+        
+        # Apply TTOPA to recover from FGSM adversarial examples
+        x_recovered_fgsm, grad_norms, losses = ttpa_improved(
+            model, x_adv_fgsm, data_dict["y_test"], num_steps=step, learning_rate=0.01, device=DEVICE
+        )
+        
+        # Evaluate the classifier on recovered samples
+        master_df, y_true, y_pred = evaluate_classifier(
+            model,
+            DataLoader(TensorDataset(x_recovered_fgsm, torch.tensor(data_dict["y_test"])), batch_size=256),
+            label_encoder,
+            f"Default_Model_{config['model_type']}_FGSM_ttopa",
+            features,
+            master_df,
+            step=f"TTOPA_Step_{step}",
+            attack="FGSM"
+        )
+        
+        # Save confusion matrix plot and data
+        save_confusion_matrix_plot(
+            data_dict["y_test"],
+            torch.argmax(model(x_recovered_fgsm), dim=1).cpu().numpy(),
+            label_encoder.classes_,
+            f"results/confusion_matrix_FGSM_TTOPA_Step_{step}.png",
+            f"results/confusion_matrix_FGSM_TTOPA_Step_{step}.csv"
+        )
+
+        print(f"TTOPA for FGSM at step {step} completed.\n")
+
 
     # Diffusion Attack with configurable steps
     print("\nRunning Diffusion Attack...")
