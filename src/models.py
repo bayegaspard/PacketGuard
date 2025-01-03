@@ -295,3 +295,98 @@ class GeneticAlgorithmAttack:
         return np.clip(offspring, 0, 1)
 
 
+
+class GeneticAlgorithmAttack:
+    def __init__(self, model, num_classes, population_size=20, mutation_rate=0.1, max_generations=10, fitness_function=None):
+        self.model = model
+        self.num_classes = num_classes
+        self.population_size = population_size
+        self.mutation_rate = mutation_rate
+        self.max_generations = max_generations
+        self.fitness_function = fitness_function
+
+    def generate(self, x, y):
+        self.model.eval()
+        x_np = x.cpu().detach().numpy()
+        y_np = y.cpu().detach().numpy()
+
+        # Ensure population size aligns with input size
+        population_size = max(self.population_size, len(x_np))
+        population = np.repeat(x_np, population_size // len(x_np) + 1, axis=0)[:population_size]
+        perturbations = np.random.uniform(-0.1, 0.1, population.shape)
+        population += perturbations
+        population = np.clip(population, 0, 1)
+
+        for generation in range(self.max_generations):
+            # Repeat labels to align with the current population size
+            subset_y_true = np.tile(y_np, len(population) // len(y_np) + 1)[:len(population)]
+
+            fitness_scores = self._evaluate_fitness(population, subset_y_true)
+
+            # Select top-performing individuals
+            top_indices = np.argsort(fitness_scores)[-self.population_size:]
+            top_individuals = population[top_indices]
+
+            if len(top_individuals) < 2:
+                print(f"Warning: Not enough top individuals in generation {generation}. Reinitializing population.")
+                perturbations = np.random.uniform(-0.1, 0.1, population.shape)
+                population += perturbations
+                population = np.clip(population, 0, 1)
+                continue
+
+            offspring = self._crossover(top_individuals)
+            offspring = self._mutate(offspring)
+
+            # Limit population size to match input size
+            population = np.vstack((top_individuals, offspring))[:population_size]
+
+        # Ensure final adversarial examples match input size
+        final_population_size = len(x_np)
+        best_indices = np.argsort(fitness_scores)[-final_population_size:]
+        best_adversarial_examples = population[best_indices]
+
+        return torch.tensor(best_adversarial_examples, dtype=torch.float32).to(x.device)
+
+
+
+
+    def _evaluate_fitness(self, population, y_true):
+        assert len(population) == len(y_true), f"Population size ({len(population)}) must match y_true size ({len(y_true)})"
+
+        population_tensor = torch.tensor(population, dtype=torch.float32).to(next(self.model.parameters()).device)
+        with torch.no_grad():
+            outputs = self.model(population_tensor)
+            probs = torch.softmax(outputs, dim=1).cpu().numpy()
+
+        if self.fitness_function:
+            return np.array([self.fitness_function(probs[i], y_true[i]) for i in range(len(y_true))])
+        else:
+            fitness_scores = np.max(probs, axis=1)
+            fitness_scores[np.array(y_true) == np.argmax(probs, axis=1)] = 0  # Penalize correct classifications
+            return fitness_scores
+
+    def _crossover(self, parents):
+        num_parents = parents.shape[0]
+
+        if num_parents < 2:
+            print("Warning: Not enough parents for crossover. Returning parents unchanged.")
+            return parents.copy()
+
+        num_features = parents.shape[1]
+        offspring = []
+
+        for _ in range(self.population_size // 2):
+            parent1_idx, parent2_idx = np.random.choice(num_parents, size=2, replace=False)
+            parent1, parent2 = parents[parent1_idx], parents[parent2_idx]
+
+            mask = np.random.rand(num_features) > 0.5
+            child = np.where(mask, parent1, parent2)
+            offspring.append(child)
+
+        return np.array(offspring)
+
+    def _mutate(self, offspring):
+        mutation_mask = np.random.rand(*offspring.shape) < self.mutation_rate
+        mutations = np.random.uniform(-0.1, 0.1, offspring.shape)
+        offspring[mutation_mask] += mutations[mutation_mask]
+        return np.clip(offspring, 0, 1)

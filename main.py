@@ -7,7 +7,7 @@ matplotlib.use('Agg')
 import pandas as pd
 from torch.utils.data import DataLoader, TensorDataset
 from src.data_loader import load_and_preprocess_data
-from src.models import Net, VarMaxModel, FGSM, DiffusionModel
+from src.models import Net, VarMaxModel, FGSM, DiffusionModel , GeneticAlgorithmAttack
 from src.utils import save_confusion_matrix_plot
 from src.evaluation import evaluate_classifier
 from src.defense import ttpa_improved
@@ -59,6 +59,31 @@ def main():
     print("\nEvaluating the classifier on clean data...")
     master_df = pd.DataFrame(columns=["Attack", "Model", "Step", "F1_Score"])
     master_df, y_true, y_pred = evaluate_classifier(model, test_loader, label_encoder, f"Default_Model_{config['model_type']}", features, master_df)
+    # Apply Genetic Algorithm Attack
+    # Apply Genetic Algorithm Attack
+    print("\nApplying Genetic Algorithm Attack...")
+    genetic_attack = GeneticAlgorithmAttack(model, num_classes=num_classes, max_generations=10)
+    x_adv_genetic = genetic_attack.generate(data_dict["X_test"], data_dict["y_test"])
+
+    # Debugging: Verify sizes
+    print(f"x_adv_genetic size: {len(x_adv_genetic)}, y_test size: {len(data_dict['y_test'])}")
+
+    # Validate size consistency
+    assert len(x_adv_genetic) == len(data_dict["y_test"]), f"Size mismatch: x_adv_genetic ({len(x_adv_genetic)}) and y_test ({len(data_dict['y_test'])}) must match."
+
+    # Evaluate Genetic Algorithm Attack examples
+    master_df, y_true, y_pred = evaluate_classifier(
+        model,
+        DataLoader(TensorDataset(x_adv_genetic, torch.tensor(data_dict["y_test"]).to(DEVICE)), batch_size=256),
+        label_encoder,
+        f"Default_Model_{config['model_type']}_Genetic_adv",
+        features,
+        master_df,
+        step="Genetic",
+        attack="Genetic"
+    )
+
+
 
     # FGSM Attack with epsilon variations
     print("\nRunning FGSM Attack...")
@@ -83,6 +108,17 @@ def main():
             f"results/confusion_matrix_FGSM_Epsilon_{epsilon}.png",
             f"results/confusion_matrix_FGSM_Epsilon_{epsilon}.csv"
         )
+    # Inside main function after Diffusion evaluation
+    print("Applying Genetic Algorithm Attack...")
+    genetic_attack = GeneticAlgorithmAttack(model, num_classes=9, max_generations=10)
+    x_adv_genetic = genetic_attack.generate(X_test, y_test)
+
+    # Evaluate Genetic Attack adversarial examples
+    evaluate_classifier(
+        model, test_loader, label_encoder,
+        description=f"{config['description']}_Genetic_adv", master_df=master_df
+    )
+
 
         # TTOPA Recovery for FGSM
     print("\nRunning TTOPA for FGSM...")
