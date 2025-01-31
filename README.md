@@ -8,7 +8,7 @@ pip install -r requirements.txt
 python3 main.py
 ```
 ### Dataset 
-Refer to : [Payload-Byte](https://github.com/Yasir-ali-farrukh/Payload-Byte.git)
+Refer to : [Payload-Byte/CICIDS](https://github.com/Yasir-ali-farrukh/Payload-Byte.git)
 
 ### Status:
 Under review at IEEE Usenix Security. Details will come after a decision is made.
