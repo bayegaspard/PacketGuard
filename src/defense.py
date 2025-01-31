@@ -2,8 +2,8 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 
-
-def ttpa_improved_sup(model, x_adv, y_true, num_steps=100, learning_rate=0.005, device='cpu'):
+# Supervised TTOPA
+def ttpa_improved(model, x_adv, y_true, num_steps=100, learning_rate=0.005, device='cpu'):
     """
     Test-Time Open Packet Adaptation (TTOPA) function for adversarial recovery.
 
