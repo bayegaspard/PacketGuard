@@ -11,7 +11,7 @@ python3 main.py
 Refer to : [Payload-Byte/CICIDS](https://github.com/Yasir-ali-farrukh/Payload-Byte.git)
 
 ### Status:
-Under review at IEEE Usenix Security. Details will come after a decision is made.
+Under review. Details will come after a decision is made.
 
 ### Acknowledgments
 > This work has been funded by UMass Dartmouth and was supported by the U.S. Military Academy (USMA) under Cooperative Agreement No. W911NF-22- 2-0160. The views and conclusions expressed in this paper are those of the authors and do not reflect the official policy or position of the U.S. Military Academy, U.S. Army, U.S. Department of Homeland Security, or U.S. Government. Usual disclaimers apply.
